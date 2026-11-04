@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RC チャート入力（4章）</title>
+<style>
+:root{--green:#14805d;--deep:#0c6247;--line:#e5ebe8;--muted:#71807b;font-family:"Noto Sans JP","Yu Gothic UI",sans-serif;color:#24302e;background:#f5f7f6}
+*{box-sizing:border-box}body{margin:0}
+header{background:#fff;border-bottom:1px solid #e9eeeb;padding:0 max(20px,calc((100vw - 880px)/2));height:56px;display:flex;align-items:center;gap:10px;font-weight:700}
+header .mark{width:28px;height:28px;border-radius:8px;background:#e4f3ed;color:var(--green);display:grid;place-items:center}
+header small{margin-left:auto;font-weight:400;font-size:12px;color:var(--muted)}
+main{max-width:880px;margin:0 auto;padding:28px 20px 48px}
+h1{font-size:24px;margin:0 0 6px}p.lead{color:var(--muted);font-size:13px;margin:0 0 22px;line-height:1.7}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:16px}
+.drop{border:1px dashed #cdd9d4;border-radius:10px;padding:22px;cursor:pointer;display:block;background:#fcfdfc;text-align:center}
+.drop:hover,.drop.on{border-color:#5caf8b;background:#f7fcf9}
+.drop b{display:block;font-size:14px}.drop span{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+.sel{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;font-size:12px}
+.sel div{border:1px solid var(--line);border-radius:8px;padding:9px 12px;background:#fafbfa;word-break:break-all}
+.sel div i{font-style:normal;color:var(--muted);display:block;font-size:11px}
+.sel .ok{border-color:#9ccfb7;background:#f3fbf7}
+input[type=file]{display:none}
+.opts{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;font-size:12px;color:#53615c;align-items:center}
+.opts input[type=number]{width:80px;padding:6px;border:1px solid #d8e2dd;border-radius:6px;font:inherit}
+button,a.btn{border:0;border-radius:8px;background:var(--green);color:#fff;font:inherit;font-weight:700;padding:12px 22px;cursor:pointer;text-decoration:none;display:inline-block}
+button:disabled{background:#b7c9c1;cursor:default}button:hover:not(:disabled),a.btn:hover{background:var(--deep)}
+a.sub{background:#e4f3ed;color:var(--deep);padding:5px 12px;font-size:12px;font-weight:600}
+a.sub:hover{background:#d3ebe1}
+#status{font-size:12px;color:var(--muted);margin:14px 0 8px;display:flex;gap:8px;align-items:center}
+#status i{width:8px;height:8px;border-radius:50%;background:#32a579;display:inline-block}#status.err i{background:#d97a60}#status.err{color:#b4533a}
+#log{background:#fafbfa;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:11px/1.7 ui-monospace,Consolas,monospace;color:#53615c;height:150px;overflow:auto;white-space:pre-wrap}
+table{border-collapse:collapse;font-size:12px;width:100%}td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}th{width:220px;color:#3f7a62;font-weight:600}
+.note{font-size:12px;color:var(--muted);line-height:1.8}
+#result table td:last-child{width:90px;text-align:right}
+@media(max-width:640px){.sel{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><span class="mark">RC</span> RC チャート入力（4章） <small>ファイルはこのブラウザー内で処理</small></header>
+<main>
+  <h1>MGTX と ANL を入れるだけ。</h1>
+  <p class="lead">midas Gen NX のモデル（MGTX）と解析結果（ANL）を 2 つまとめて選ぶと、計算書 4-1 RC柱・4-2 RC梁・4-3 耐震壁（と 5-4 の終局）の RC チャートに入れる Excel を作ります。ANL は梁要素の断面力と板要素（耐震壁）の断面力を含めて出力したものを使います。</p>
+
+  <section class="card">
+    <label class="drop" id="drop"><b>MGTX と ANL を、まとめてここにドロップ（またはクリックして 2 つ選ぶ）</b><span>MGTX／MGT と ANL。順番は問いません。同じモデル・同じ解析のものを使ってください</span><input id="file" type="file" multiple accept=".mgt,.mgtx,.anl,.txt,.out"></label>
+    <div class="sel"><div id="selModel"><i>モデル</i>未選択</div><div id="selAnl"><i>解析結果</i>未選択</div></div>
+    <div class="opts">
+      <label>Fc <input id="fc" type="number" min="0" step="1" placeholder="自動"> N/mm²（空欄＝MGTX の材料名から）</label>
+      <label><input id="swap" type="checkbox"> 柱の X・Y を入れ替える</label>
+    </div>
+    <div style="margin-top:18px;display:flex;gap:12px;align-items:center">
+      <button id="run" disabled>Excel を作る</button><span class="note" id="hint"></span>
+    </div>
+    <div id="status"><i></i><span>計算エンジンを準備しています…（初回は数十秒かかります）</span></div>
+    <div id="log"></div>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><b>できたファイル</b><a class="btn" id="zip" style="margin-left:auto">まとめて ZIP でダウンロード</a></div>
+    <table id="files"></table>
+  </section>
+
+  <section class="card">
+    <table>
+      <tr><th>4-1_RC柱_短期.xlsx</th><td>RC柱チャート（柱テンプレートの形）。柱頭・柱脚の 2 行。</td></tr>
+      <tr><th>4-2_RC梁_短期.xlsx</th><td>RC梁（基礎梁）チャート（梁テンプレートの形）。</td></tr>
+      <tr><th>4-3_耐震壁_面外_短期.xlsx</th><td>面外の検討。RC柱のチャートに、壁を幅 1m の柱とみなして入れる。</td></tr>
+      <tr><th>4-3_耐震壁_面内_チャート入力.xlsx</th><td>面内の検討。耐震壁チャートの「基本入力」に打ち込む値。黄色の欄（壁筋・柱の HOOP 筋）はモデルに無いので 4-3・4-1 の断面諸元から入れる。</td></tr>
+      <tr><th>5-4_終局/</th><td>同じものの終局（QUX・QUY）版。5-4 保有時の断面算定用。</td></tr>
+      <tr><th>参考/</th><td>採用した荷重ケースの根拠、壁の応力の詳細。チャートには入れない。</td></tr>
+    </table>
+    <p class="note" style="margin:12px 0 0">L＝長期、E＝候補ケースと長期の差の絶対値。決め方の詳細は PC 版の README にあります。非公式ツールです。出力値は設計者が確認してください。モデルを直したら MGTX と ANL の両方を出し直してください。</p>
+  </section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const files = { model: null, anl: null };
+let ready = false, busy = false, objectUrls = [];
+
+function setStatus(msg, err = false) { $("#status").classList.toggle("err", err); $("#status span").textContent = msg; }
+function log(t) { const b = $("#log"); b.textContent += t + "\n"; b.scrollTop = b.scrollHeight; }
+function refresh() {
+  const ok = ready && !busy && files.model && files.anl;
+  $("#run").disabled = !ok;
+  $("#hint").textContent = ok ? "" : (ready ? "MGTX と ANL の両方を選んでください" : "");
+}
+function show(kind, el, f) {
+  const box = $(el);
+  box.classList.toggle("ok", !!f);
+  box.innerHTML = "<i>" + (kind === "model" ? "モデル" : "解析結果") + "</i>" + (f ? f.name + "（" + (f.size / 1048576).toFixed(1) + " MB）" : "未選択");
+}
+function take(list) {
+  const unknown = [];
+  for (const f of list) {
+    const n = f.name.toLowerCase();
+    if (/\.(mgtx|mgt)$/.test(n)) files.model = f;
+    else if (n.endsWith(".anl")) files.anl = f;
+    else unknown.push(f.name);
+  }
+  show("model", "#selModel", files.model);
+  show("anl", "#selAnl", files.anl);
+  if (unknown.length) setStatus("MGTX／MGT と ANL 以外のファイルは使えません：" + unknown.join("、"), true);
+  refresh();
+}
+
+const B = window.__BUNDLE || null;
+const worker = B ? new Worker(URL.createObjectURL(new Blob([B.worker], { type: "text/javascript" }))) : new Worker("worker.js");
+worker.onerror = (e) => { setStatus("計算エンジンの起動に失敗しました", true); log("エラー: " + (e.message || "worker")); };
+worker.onmessage = (e) => {
+  const m = e.data;
+  if (m.type === "ready") { ready = true; setStatus("準備ができました。MGTX と ANL を選んでください。"); refresh(); }
+  else if (m.type === "log") log(m.text);
+  else if (m.type === "done") {
+    busy = false; refresh();
+    objectUrls.forEach(URL.revokeObjectURL); objectUrls = [];
+    const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const base = files.model.name.replace(/\.[^.]+$/, "");
+    const mk = (buf, type) => { const u = URL.createObjectURL(new Blob([buf], { type })); objectUrls.push(u); return u; };
+    const zip = $("#zip");
+    zip.href = mk(m.zip, "application/zip"); zip.download = "RCチャート入力_" + base + ".zip";
+    const tb = $("#files"); tb.innerHTML = "";
+    for (const f of m.files) {
+      const tr = document.createElement("tr");
+      const name = f.path.split("/").pop();
+      tr.innerHTML = "<td></td><td><a class='sub btn'>ダウンロード</a></td>";
+      tr.firstChild.textContent = f.path;
+      const a = tr.querySelector("a"); a.href = mk(f.bytes, mime); a.download = name;
+      tb.appendChild(tr);
+    }
+    $("#result").hidden = false;
+    setStatus("Excel を " + m.files.length + " 個作成しました。");
+  } else if (m.type === "error") {
+    busy = false; refresh();
+    setStatus("失敗しました: " + (m.summary || "エラー"), true); log(m.text);
+  }
+};
+worker.postMessage({ type: "init", bundle: B });
+
+const drop = $("#drop");
+$("#file").addEventListener("change", (e) => take(e.target.files));
+["dragenter", "dragover"].forEach((n) => drop.addEventListener(n, (e) => { e.preventDefault(); drop.classList.add("on"); }));
+["dragleave", "drop"].forEach((n) => drop.addEventListener(n, (e) => { e.preventDefault(); drop.classList.remove("on"); }));
+drop.addEventListener("drop", (e) => take(e.dataTransfer.files));
+
+$("#run").addEventListener("click", async () => {
+  busy = true; refresh(); $("#log").textContent = ""; $("#result").hidden = true;
+  setStatus("読み込み・集計中…（ANL が大きいと 1 分ほどかかります）");
+  const [model, anl] = await Promise.all([files.model.arrayBuffer(), files.anl.arrayBuffer()]);
+  const fc = parseFloat($("#fc").value);
+  worker.postMessage({
+    type: "convert", model, anl, modelExt: /\.mgt$/i.test(files.model.name) ? ".mgt" : ".mgtx",
+    fc: fc > 0 ? fc : null, swap: $("#swap").checked,
+  }, [model, anl]);
+});
+</script>
+</body>
+</html>
