@@ -458,8 +458,40 @@ def add_check_sheets(wb, d):
     header(wo, 5, heads, [8, 8, 22, 8, 22] + [11] * 9)
     tpl = {'短期': [], '終局': []}
     r = 6
+    PCT = 0.95   # 局所的な応力集中を無視するため、全要素・位置の ΔMyy の 95% 値でケースを比べる（最大値ではなく）
+    sel = {}
+    info = []
     for kind in ('短期', '終局'):
         cs = [c for c in cases if classes[c] == kind]
+        pts = []
+        for e in d['plates']:
+            n = e['nodes']
+            for nds in ((n[2], n[3]), (n[0], n[1])):
+                lg = nodeval(res, e['id'], LONG, nds, kf, km)
+                if lg:
+                    pts.append((e['id'], nds, lg))
+        score = {}
+        for c in cs:
+            dv = []
+            for eid, nds, lg in pts:
+                v = nodeval(res, eid, c, nds, kf, km)
+                if v:
+                    dv.append(abs(v['Myy'] - lg['Myy']))
+            if dv:
+                dv.sort()
+                score[c] = dv[min(len(dv) - 1, int(len(dv) * PCT))]
+        if score:
+            best = max(score, key=score.get)
+            sel[kind] = best
+            top = sorted(score, key=score.get, reverse=True)[:5]
+            info.append(f'{kind}：採用 {best}（ΔMyy の 95% 値 {score[best]:.1f} kN·m/m）。上位 ' + '、'.join(f'{c} {score[c]:.1f}' for c in top))
+            log('面外 ' + info[-1])
+    wo['A2'] = ('脚部＝要素下端の節点（3・4）の平均、頂部＝上端の節点（1・2）の平均。N は圧縮＋（kN/m）＝1m 幅の kN、M は kN·m/m、Q は kN/m。'
+                'L＝長期、E＝採用ケースと長期の差の絶対値。採用ケースは区分ごとに 1 ケースだけ（全要素に同じケースを載せる）。')
+    wo['A3'] = ('採用ケースの決め方：各ケースについて、全要素・位置の縦筋方向の曲げ Myy の変化 ΔMyy を並べ、上位 5% を除いた最大（95% 値）が最大のケース。'
+                '局所的な応力集中は除く。縦筋は Myy、横筋は Mxx。Myy・Mxx のどちらが縦筋方向かは midas の定義を確認すること。 ' + ' ／ '.join(info))
+    for kind in ('短期', '終局'):
+        cs = [sel[kind]] if kind in sel else []
         for e in d['plates']:
             g = d['geo'][e['id']]
             label = d['gi'].label(g['center'], g['center'][2]) if d['gi'].available else ''
@@ -470,7 +502,7 @@ def add_check_sheets(wb, d):
                 vs = {c: v for c, v in vs.items() if v}
                 if not lg or not vs:
                     continue
-                c = max(vs, key=lambda x: (abs(vs[x]['Myy'] - lg['Myy']), abs(vs[x]['Fyy'] - lg['Fyy'])))
+                c = cs[0]
                 v = vs[c]
                 vals = [kind, e['id'], label, pos, c, -lg['Fyy'], abs(v['Fyy'] - lg['Fyy']), abs(lg['Myy']), abs(v['Myy'] - lg['Myy']),
                         abs(lg['Vyy']), abs(v['Vyy'] - lg['Vyy']), abs(lg['Mxx']), abs(v['Mxx'] - lg['Mxx']), t0]
