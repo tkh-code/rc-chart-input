@@ -458,40 +458,16 @@ def add_check_sheets(wb, d):
     header(wo, 5, heads, [8, 8, 22, 8, 22] + [11] * 9)
     tpl = {'短期': [], '終局': []}
     r = 6
-    PCT = 0.95   # 局所的な応力集中を無視するため、全要素・位置の ΔMyy の 95% 値でケースを比べる（最大値ではなく）
-    sel = {}
-    info = []
+    PCT = 0.95   # 検定比の代理指標の上位 5% は局所的な応力集中とみなして最終行の候補から外す
+    # 検定比の代理指標：幅 1m × 厚さ t の弾性断面で、最大圧縮応力と最大引張応力の大きい方（L＋E の N・M から）
+    A_ = 1000.0 * t0 / 1e6      # m²
+    Z_ = 1000.0 * t0 ** 2 / 6 / 1e9   # m³
+    def score(Nc, M):           # Nc 圧縮＋ kN、M kN·m
+        return max(Nc / A_ + M / Z_, -(Nc / A_) + M / Z_) / 1000.0   # N/mm²
+    cand = {}
     for kind in ('短期', '終局'):
         cs = [c for c in cases if classes[c] == kind]
-        pts = []
-        for e in d['plates']:
-            n = e['nodes']
-            for nds in ((n[2], n[3]), (n[0], n[1])):
-                lg = nodeval(res, e['id'], LONG, nds, kf, km)
-                if lg:
-                    pts.append((e['id'], nds, lg))
-        score = {}
-        for c in cs:
-            dv = []
-            for eid, nds, lg in pts:
-                v = nodeval(res, eid, c, nds, kf, km)
-                if v:
-                    dv.append(abs(v['Myy'] - lg['Myy']))
-            if dv:
-                dv.sort()
-                score[c] = dv[min(len(dv) - 1, int(len(dv) * PCT))]
-        if score:
-            best = max(score, key=score.get)
-            sel[kind] = best
-            top = sorted(score, key=score.get, reverse=True)[:5]
-            info.append(f'{kind}：採用 {best}（ΔMyy の 95% 値 {score[best]:.1f} kN·m/m）。上位 ' + '、'.join(f'{c} {score[c]:.1f}' for c in top))
-            log('面外 ' + info[-1])
-    wo['A2'] = ('脚部＝要素下端の節点（3・4）の平均、頂部＝上端の節点（1・2）の平均。N は圧縮＋（kN/m）＝1m 幅の kN、M は kN·m/m、Q は kN/m。'
-                'L＝長期、E＝採用ケースと長期の差の絶対値。採用ケースは区分ごとに 1 ケースだけ（全要素に同じケースを載せる）。')
-    wo['A3'] = ('採用ケースの決め方：各ケースについて、全要素・位置の縦筋方向の曲げ Myy の変化 ΔMyy を並べ、上位 5% を除いた最大（95% 値）が最大のケース。'
-                '局所的な応力集中は除く。縦筋は Myy、横筋は Mxx。Myy・Mxx のどちらが縦筋方向かは midas の定義を確認すること。 ' + ' ／ '.join(info))
-    for kind in ('短期', '終局'):
-        cs = [sel[kind]] if kind in sel else []
+        pool = []
         for e in d['plates']:
             g = d['geo'][e['id']]
             label = d['gi'].label(g['center'], g['center'][2]) if d['gi'].available else ''
@@ -502,11 +478,14 @@ def add_check_sheets(wb, d):
                 vs = {c: v for c, v in vs.items() if v}
                 if not lg or not vs:
                     continue
-                c = cs[0]
-                v = vs[c]
-                vals = [kind, e['id'], label, pos, c, -lg['Fyy'], abs(v['Fyy'] - lg['Fyy']), abs(lg['Myy']), abs(v['Myy'] - lg['Myy']),
-                        abs(lg['Vyy']), abs(v['Vyy'] - lg['Vyy']), abs(lg['Mxx']), abs(v['Mxx'] - lg['Mxx']), t0]
-                for j, x in enumerate(vals):
+                def vals_of(c):
+                    v = vs[c]
+                    return [kind, e['id'], label, pos, c, -lg['Fyy'], abs(v['Fyy'] - lg['Fyy']), abs(lg['Myy']), abs(v['Myy'] - lg['Myy']),
+                            abs(lg['Vyy']), abs(v['Vyy'] - lg['Vyy']), abs(lg['Mxx']), abs(v['Mxx'] - lg['Mxx']), t0]
+                # 部材ごとの行：その要素・位置で縦筋方向の曲げ Myy の変化が最大のケース
+                c = max(vs, key=lambda x: (abs(vs[x]['Myy'] - lg['Myy']), abs(vs[x]['Fyy'] - lg['Fyy'])))
+                row = vals_of(c)
+                for j, x in enumerate(row):
                     cell = wo.cell(r, 1 + j, round(x, 3) if isinstance(x, float) else x)
                     cell.border = BORDER
                     if j == 0:
@@ -515,8 +494,37 @@ def add_check_sheets(wb, d):
                         cell.number_format = '0.0'
                 r += 1
                 # 柱テンプレート：Dx＝壁厚（曲げの方向）、Dy＝1000。X 方向の曲げだけ入れる
-                tpl[kind].append([f'W{e["id"]} {label} {pos}'.replace('  ', ' '), t0, 1000.0, -lg['Fyy'], abs(v['Fyy'] - lg['Fyy']), 0.0,
-                                  abs(lg['Myy']), 0.0, abs(v['Myy'] - lg['Myy']), 0.0, abs(lg['Vyy']), 0.0, abs(v['Vyy'] - lg['Vyy']), 0.0, d['fc']])
+                tpl[kind].append([f'W{e["id"]} {label} {pos}'.replace('  ', ' '), t0, 1000.0, row[5], row[6], 0.0,
+                                  row[7], 0.0, row[8], 0.0, row[9], 0.0, row[10], 0.0, d['fc']])
+                # 最終行の候補：全ケースのうち検定比の代理指標が最大のケース
+                def sc(x):
+                    v = vs[x]
+                    return score(-lg['Fyy'] + abs(v['Fyy'] - lg['Fyy']), abs(lg['Myy']) + abs(v['Myy'] - lg['Myy']))
+                cb = max(vs, key=sc)
+                pool.append((sc(cb), e['id'], pos, label, cb, vals_of(cb)))
+        if pool:
+            pool.sort(key=lambda x: x[0])
+            k = max(0, min(len(pool) - 1, int(len(pool) * PCT) - 1))   # 上位 5% を飛ばした最大
+            sc_, eid, pos, label, cb, row = pool[k]
+            skipped = [f'W{p_[1]} {p_[2]}({p_[0]:.1f})' for p_ in pool[k + 1:]]
+            cand[kind] = (eid, pos, cb, sc_, skipped)
+            log(f'面外 {kind} 最終行：W{eid} {label} {pos}・{cb}（代理指標 {sc_:.1f} N/mm²）。除外した上位 {len(skipped)} 件：' + '、'.join(skipped))
+            row = list(row); row[2] = (label + ' ' if label else '') + '【最大想定】'
+            for j, x in enumerate(row):
+                cell = wo.cell(r, 1 + j, round(x, 3) if isinstance(x, float) else x)
+                cell.border = BORDER
+                cell.font = BOLD
+                cell.fill = mx.PatternFill('solid', fgColor='FFF2CC')
+                if j >= 5 and j < 13:
+                    cell.number_format = '0.0'
+            r += 1
+            tpl[kind].append([f'【最大想定】W{eid} {label} {pos} {cb}'.replace('  ', ' '), t0, 1000.0, row[5], row[6], 0.0,
+                              row[7], 0.0, row[8], 0.0, row[9], 0.0, row[10], 0.0, d['fc']])
+    wo['A3'] = ('縦筋は Myy、横筋は Mxx。Myy・Mxx のどちらが縦筋方向かは midas の定義を確認すること。区分ごとの黄色の行が「検定比が最大になりそうな 1 ケース」：'
+                '全要素・位置・ケースのうち、幅1m×厚さtの弾性断面の縁応力（NL+NE と ML+ME から）が最大のもの。上位5%（局所的な応力集中）は除く。'
+                + ' ／ '.join(f'{k_}：W{v_[0]} {v_[1]} {v_[2]}' for k_, v_ in cand.items()))
+    wo['A2'] = ('脚部＝要素下端の節点（3・4）の平均、頂部＝上端の節点（1・2）の平均。N は圧縮＋（kN/m）＝1m 幅の kN、M は kN·m/m、Q は kN/m。'
+                'L＝長期、E＝採用ケースと長期の差の絶対値。部材ごとの行の採用ケースは、その要素・位置で Myy の変化が最大のケース。')
     wo.freeze_panes = 'F6'
     wo.auto_filter.ref = f'A5:{get_column_letter(len(heads))}{r - 1}'
     # 柱テンプレート（RC8）の形で
